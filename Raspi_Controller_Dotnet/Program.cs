@@ -77,7 +77,7 @@ namespace Raspi_Controller_Dotnet
             }
             if (!(IsWindows ^ IsLinux))
             {
-                Quit("Not windows or linux, which will probably cause issues. If you are 100% sure you want to continue, run with the argument -os [os] where [os] is windows or linux.", false);
+                Quit("Not windows or linux, which will probably cause issues. If you are 100% sure you want to continue, run with the argument -os [os] where [os] is windows or linux to pretend to be one of the two.", false);
             }
             
 
