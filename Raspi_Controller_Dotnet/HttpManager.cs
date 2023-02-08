@@ -186,7 +186,7 @@ namespace Raspi_Controller_Dotnet
                 else if(resource.StartsWith("files/open/"))
                 {
                     if (!Program.UserManager.UserHasPerms(User, "readfiles"))
-                    {
+                    {   
                         NotAllowedPage(ctx);
                         return;
                     }
@@ -206,6 +206,7 @@ namespace Raspi_Controller_Dotnet
                         return;
                     }
                     string path = resource.Substring(11).Replace("%20", " ");
+                    string filename = Path.GetFileName(path);
                     bool prot = Program.FileManager.IsProtected(path);
                     if (prot && !Program.UserManager.UserHasPerms(User, "accessprotectedfiles"))
                     {
@@ -215,6 +216,31 @@ namespace Raspi_Controller_Dotnet
                     FileStream fs = File.OpenRead(path);
                     fs.CopyTo(ctx.Response.OutputStream);
                     fs.Close();
+                    ctx.Response.Headers.Set("Content-Type", "application/octet-stream");
+                    ctx.Response.Headers.Set("Content-Disposition", $"attachment; filename=\"{filename}\"");
+                    ctx.Response.Close();
+                    return;
+                }
+                else if (resource.StartsWith("files/download-zip/"))
+                {
+                    if (!Program.UserManager.UserHasPerms(User, "readfiles"))
+                    {
+                        NotAllowedPage(ctx);
+                        return;
+                    }
+                    string path = resource.Substring(19).Replace("%20", " ");
+                    string dir = Path.GetFileName(path);
+                    bool prot = Program.FileManager.IsProtected(path);
+                    
+                    if (prot && !Program.UserManager.UserHasPerms(User, "accessprotectedfiles"))
+                    {
+                        NotAllowedPage(ctx);
+                        return;
+                    }
+                    bool viewProtected = Program.UserManager.UserHasPerms(User, "accessprotectedfiles");
+                    ctx.Response.Headers.Set("Content-Type", "application/octet-stream");
+                    ctx.Response.Headers.Set("Content-Disposition", $"attachment; filename=\"{dir}.zip\"");
+                    Program.FileManager.ZipFileTo(dir, ctx.Response.OutputStream, viewProtected);
                     ctx.Response.Close();
                     return;
                 }
@@ -283,6 +309,7 @@ namespace Raspi_Controller_Dotnet
                     bool isDir = (attr & FileAttributes.Directory) == FileAttributes.Directory;
                     if (!isDir) File.Delete(path);
                     else Directory.Delete(path, true);
+                    ctx.Response.OutputStream.Write(Encoding.UTF8.GetBytes("success"));
                     ctx.Response.Close();
                 }
                 else if (resource == "network")
