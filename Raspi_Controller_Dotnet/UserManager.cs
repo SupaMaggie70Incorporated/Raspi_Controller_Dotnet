@@ -67,17 +67,18 @@ namespace Raspi_Controller_Dotnet
             {
                 Console.WriteLine($"User: {node.ToJsonString()}");
             }
+            SetupAnonymousUser();
         }
         public void SetupAnonymousUser()
         {
             try
             {
-                JsonArray arr = JSON["users"].AsArray();
                 JsonObject user = new JsonObject();
                 user["username"] = JsonValue.Create("Anonymous");
                 user["hash"] = JsonValue.Create(PasswordHash(""));
                 user["accesslevel"] = JsonValue.Create(0);
                 user["additionalpermissions"] = new JsonArray();
+                AnonymousUser = user;
             }
             catch { }
         }

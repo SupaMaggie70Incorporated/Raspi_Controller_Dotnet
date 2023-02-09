@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Security.AccessControl;
 using System.IO;
 using System.IO.Compression;
+using System.Net;
 
 namespace Raspi_Controller_Dotnet
 {
@@ -31,24 +32,54 @@ namespace Raspi_Controller_Dotnet
         public bool IsProtected(string filename)
         {
             FileAttributes fb = File.GetAttributes(filename);
-            return (fb & (FileAttributes.Hidden | FileAttributes.System)) != 0;
+            return (fb & FileAttributes.System) != 0;
         }
-        public void ZipFileTo(string directory, Stream output, bool includeSystemFiles)
+        public bool IsHidden(string filename)
         {
-            using (var archive = new ZipArchive(output, ZipArchiveMode.Create, false))
+            FileAttributes fb = File.GetAttributes(filename);
+            return (fb & FileAttributes.Hidden) != 0;
+        }
+        const long MaxZipSizeTotalBytes = 536870912; // 500MB max
+        public long GetFolderSize(string directory)
+        {
+            long total = 0;
+            foreach(string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)) 
             {
+                total += new FileInfo(file).Length;
+                if (total > MaxZipSizeTotalBytes) return MaxZipSizeTotalBytes;
+            }
+            return total;
+        }
+        public void ZipFileTo(string directory, HttpListenerContext ctx, bool includeSystemFiles, bool includeHidden)
+        {
+            using (var archive = new ZipArchive(ctx.Response.OutputStream, ZipArchiveMode.Create, true))
+            {
+                long downloadedSize = 0;
                 foreach(string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
                 {
                     if (!includeSystemFiles && IsProtected(file)) continue;
-                    ZipArchiveEntry entry = archive.CreateEntry(Path.GetFileName(file));
-                    using (Stream s = entry.Open())
-                    using (FileStream fs = File.OpenRead(file))
+                    else if(!includeHidden&& IsHidden(file)) continue;
+                    long len = new FileInfo(file).Length;
+                    downloadedSize += len;
+                    if(downloadedSize > MaxZipSizeTotalBytes || !ctx.Response.OutputStream.CanWrite)
                     {
-                        fs.CopyTo(s);
-                        s.Flush();
+                        break;
+                    }
+                    ZipArchiveEntry entry = archive.CreateEntry(Path.GetRelativePath(directory, file),CompressionLevel.SmallestSize);
+                    try
+                    {
+                        using (FileStream fs = File.OpenRead(file))
+                        using (Stream s = entry.Open())
+                        {
+                            fs.CopyTo(s);
+                        }
+                    }
+                    catch
+                    {
                     }
                 }
             }
+            ctx.Response.Close();
         }
         public bool IsDirectory(string filename)
         {

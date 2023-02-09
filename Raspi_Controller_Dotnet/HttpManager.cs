@@ -64,10 +64,7 @@ namespace Raspi_Controller_Dotnet
                     string fp = $"{Program.HtmlPath}/{file}";
                     if (!File.Exists(fp))
                     {
-                        ctx.Response.OutputStream.Write(Encoding.UTF8.GetBytes("File not found."));
-                        ctx.Response.OutputStream.Flush();
-                        ctx.Response.StatusCode = (int)HttpStatusCode.NotFound;
-                        ctx.Response.Close();
+                        NotFound(ctx);
                         return;
                     }
                     FileStream fs = File.OpenRead(fp);
@@ -172,7 +169,7 @@ namespace Raspi_Controller_Dotnet
                 {
                     if(!Program.UserManager.UserHasPerms(User, "viewfiles"))
                     {
-                        NotAllowedPage(ctx); 
+                        Forbidden(ctx);
                         return;
                     }
                     Console.WriteLine("Sending files page");
@@ -186,8 +183,8 @@ namespace Raspi_Controller_Dotnet
                 else if(resource.StartsWith("files/open/"))
                 {
                     if (!Program.UserManager.UserHasPerms(User, "readfiles"))
-                    {   
-                        NotAllowedPage(ctx);
+                    {
+                        Forbidden(ctx);
                         return;
                     }
                     Console.WriteLine("Sending file editor page");
@@ -202,18 +199,18 @@ namespace Raspi_Controller_Dotnet
                 {
                     if (!Program.UserManager.UserHasPerms(User, "readfiles"))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     string path = resource.Substring(11).Replace("%20", " ");
                     string filename = Path.GetFileName(path);
-                    bool prot = Program.FileManager.IsProtected(path);
-                    if (prot && !Program.UserManager.UserHasPerms(User, "accessprotectedfiles"))
+                    if ((Program.FileManager.IsProtected(path) && !Program.UserManager.UserHasPerms(User, "viewprotectedfiles")) || (Program.FileManager.IsHidden(path) && !Program.UserManager.UserHasPerms(User, "accesshiddenfiles")))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     FileStream fs = File.OpenRead(path);
+                    ctx.Response.ContentLength64 = fs.Length;
                     fs.CopyTo(ctx.Response.OutputStream);
                     fs.Close();
                     ctx.Response.Headers.Set("Content-Type", "application/octet-stream");
@@ -225,36 +222,35 @@ namespace Raspi_Controller_Dotnet
                 {
                     if (!Program.UserManager.UserHasPerms(User, "readfiles"))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     string path = resource.Substring(19).Replace("%20", " ");
                     string dir = Path.GetFileName(path);
-                    bool prot = Program.FileManager.IsProtected(path);
                     
-                    if (prot && !Program.UserManager.UserHasPerms(User, "accessprotectedfiles"))
+                    if ((Program.FileManager.IsProtected(path) && !Program.UserManager.UserHasPerms(User, "viewprotectedfiles")) || (Program.FileManager.IsHidden(path) && !Program.UserManager.UserHasPerms(User, "accesshiddenfiles")))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
-                    bool viewProtected = Program.UserManager.UserHasPerms(User, "accessprotectedfiles");
+                    bool viewProtected = Program.UserManager.UserHasPerms(User, "viewprotectedfiles");
+                    bool viewHidden = Program.UserManager.UserHasPerms(User, "accesshiddenfiles");
                     ctx.Response.Headers.Set("Content-Type", "application/octet-stream");
                     ctx.Response.Headers.Set("Content-Disposition", $"attachment; filename=\"{dir}.zip\"");
-                    Program.FileManager.ZipFileTo(dir, ctx.Response.OutputStream, viewProtected);
-                    ctx.Response.Close();
+                    Program.FileManager.ZipFileTo(path, ctx, viewProtected, viewHidden);
                     return;
                 }
                 else if (resource.StartsWith("files/list/"))
                 {
                     if (!Program.UserManager.UserHasPerms(User, "viewfiles"))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     string path = resource.Substring(11).Replace("%20", " ") + '/';
 
 
-                    bool viewProt = Program.UserManager.UserHasPerms(User, "accessprotectedfiles");
+                    bool viewProt = Program.UserManager.UserHasPerms(User, "viewprotectedfiles");
                     Console.WriteLine($"Sending {(viewProt ? "protected" : "unprotected")} file & directory list for {path}");
                     JsonArray directories = new JsonArray(Directory.GetDirectories(path).Where(dir => !Program.FileManager.IsProtected(dir) || viewProt).Select(dir => JsonValue.Create(Path.GetFileName(dir))).ToArray());
                     JsonArray files = new JsonArray(Directory.GetFiles(path).Where(file => !Program.FileManager.IsProtected(file) || viewProt).Select(file => JsonValue.Create(Path.GetFileName(file))).ToArray());
@@ -270,21 +266,51 @@ namespace Raspi_Controller_Dotnet
                     ctx.Response.Close();
                     return;
                 }
+                else if(resource.StartsWith("files/rename/"))
+                {
+                    if (!Program.UserManager.UserHasPerms(User, "editfiles"))
+                    {
+                        Forbidden(ctx);
+                        return;
+                    }
+                    string path = resource.Substring(13).Replace("%20", " ");
+                    string newName = new StreamReader(ctx.Request.InputStream).ReadToEnd();
+                    if(newName.Contains(".."))
+                    {
+                        Forbidden(ctx);
+                        return;
+                    }
+                    string newPath = Path.GetFileName(path) + newName;
+                    if(File.Exists(newPath))
+                    {
+                        Forbidden(ctx);
+                        return;
+                    }
+                    bool prot = Program.FileManager.IsProtected(path);
+                    if ((Program.FileManager.IsProtected(path) && !Program.UserManager.UserHasPerms(User, "viewprotectedfiles")) || (Program.FileManager.IsHidden(path) && !Program.UserManager.UserHasPerms(User, "accesshiddenfiles")))
+                    {
+                        Forbidden(ctx);
+                        return;
+                    }
+                    Console.WriteLine($"Renaming {path}");
+                    File.Move(path, newPath);
+                    ctx.Response.Close();
+                }
                 else if (resource.StartsWith("files/write/"))
                 {
-                    if (!Program.UserManager.UserHasPerms(User, "writefiles"))
+                    if (!Program.UserManager.UserHasPerms(User, "editfiles"))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     string path = resource.Substring(12).Replace("%20", " ");
                     bool prot = Program.FileManager.IsProtected(path);
-                    Console.WriteLine($"Writing to {path}");
-                    if (prot && !Program.UserManager.UserHasPerms(User, "accessprotectedfiles"))
+                    if ((Program.FileManager.IsProtected(path) && !Program.UserManager.UserHasPerms(User, "viewprotectedfiles")) || (Program.FileManager.IsHidden(path) && !Program.UserManager.UserHasPerms(User, "accesshiddenfiles")))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
+                    Console.WriteLine($"Writing to {path}");
                     FileStream fs = File.OpenWrite(path);
                     ctx.Request.InputStream.CopyTo(fs);
                     fs.Flush();
@@ -295,14 +321,15 @@ namespace Raspi_Controller_Dotnet
                 {
                     if (!Program.UserManager.UserHasPerms(User, "deletefiles"))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     string path = "C:/" + resource.Substring(13).Replace("%20", " ");
                     bool prot = Program.FileManager.IsProtected(path);
-                    if (prot && !Program.UserManager.UserHasPerms(User, "deleteprotectedfiles"))
+                    bool hidden = Program.FileManager.IsHidden(path);
+                    if ((Program.FileManager.IsProtected(path) && !Program.UserManager.UserHasPerms(User, "viewprotectedfiles")) || (Program.FileManager.IsHidden(path) && !Program.UserManager.UserHasPerms(User, "accesshiddenfiles")))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     FileAttributes attr = File.GetAttributes(path);
@@ -316,7 +343,7 @@ namespace Raspi_Controller_Dotnet
                 {
                     if (!Program.UserManager.UserHasPerms(User, "viewnetwork"))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
                     Console.WriteLine("Sending network manager");
@@ -331,9 +358,10 @@ namespace Raspi_Controller_Dotnet
                 {
                     if (!Program.UserManager.UserHasPerms(User, "viewnetwork"))
                     {
-                        NotAllowedPage(ctx);
+                        Forbidden(ctx);
                         return;
                     }
+                    
                     string constantHeader = "<tr><th>Device Name</th><th>Device Address</th><th>Last Seen</th></tr>";
                     byte[] b = Encoding.UTF8.GetBytes(constantHeader);
                     ctx.Response.OutputStream.Write(b, 0, b.Length);
@@ -346,6 +374,27 @@ namespace Raspi_Controller_Dotnet
                     ctx.Response.Close();
                     return;
                 }
+                else if(resource == "profile")
+                {
+                    /*
+                    NotImplemented(ctx);
+                    return;*/
+                    if (!Program.UserManager.UserHasPerms(User, "viewnetwork"))
+                    {
+                        Forbidden(ctx);
+                        return;
+                    }
+                    Console.WriteLine("Sending account manager");
+                    bool isAnon = User == Program.UserManager.AnonymousUser;
+                    FileStream fs;
+                    if(isAnon) fs = File.OpenRead(Program.HtmlPath + "/anonymous-profile.html");
+                    else fs = File.OpenRead(Program.HtmlPath + "/profile.html");
+                    fs.CopyTo(ctx.Response.OutputStream);
+                    fs.Close();
+                    ctx.Response.ContentType = "text/html";
+                    ctx.Response.Close();
+                    return;
+                }
                 else if (resource == "")
                 {
                     ctx.Response.Redirect("/home/");
@@ -354,33 +403,60 @@ namespace Raspi_Controller_Dotnet
                 }
                 else
                 {
-                    Console.WriteLine("Sending 404 page");
-                    FileStream fs = File.OpenRead(Program.HtmlPath + "/404notfound.html");
-                    fs.CopyTo(ctx.Response.OutputStream);
-                    fs.Close();
-                    ctx.Response.ContentType = "text/html";
-                    ctx.Response.Close();
+                    NotFound(ctx);
                     return;
                 }
                 ctx.Response.Close();
             }
+            catch(HttpListenerException e)
+            {
+
+            }
             catch(Exception e)
             {
-                
                 Console.WriteLine("Error in http request handling: ");
                 Console.WriteLine(e.ToString());
-                // throw;
+                throw;
             }
         }
-        public void NotAllowedPage(HttpListenerContext ctx)
+        private void NotFound(HttpListenerContext ctx)
         {
-            Console.WriteLine("Sending not allowed page");
-            FileStream fs = File.OpenRead(Program.HtmlPath + "/notallowed.html");
-            fs.CopyTo(ctx.Response.OutputStream);
-            fs.Close();
-            ctx.Response.ContentType = "text/html";
+            ctx.Response.StatusCode = (int)HttpStatusCode.NotFound;
+            string? h = ctx.Request.Headers.Get("Accept");
+            if (h != null && h.Contains("text/html"))
+            {
+                ctx.Response.ContentType = "text/html";
+                FileStream fs = File.OpenRead(Program.HtmlPath + "/404notfound.html");
+                fs.CopyTo(ctx.Response.OutputStream);
+                fs.Close();
+            }
             ctx.Response.Close();
-            return;
+        }
+        private void NotImplemented(HttpListenerContext ctx)
+        {
+            ctx.Response.StatusCode = (int)HttpStatusCode.NotImplemented;
+            string? h = ctx.Request.Headers.Get("Accept");
+            if (h != null && h.Contains("text/html"))
+            {
+                ctx.Response.ContentType = "text/html";
+                FileStream fs = File.OpenRead(Program.HtmlPath + "/501notimplemented.html");
+                fs.CopyTo(ctx.Response.OutputStream);
+                fs.Close();
+            }
+            ctx.Response.Close();
+        }
+        private void Forbidden(HttpListenerContext ctx)
+        {
+            ctx.Response.StatusCode = (int)HttpStatusCode.Forbidden;
+            string? h = ctx.Request.Headers.Get("Accept");
+            if (h != null && h.Contains("text/html"))
+            {
+                ctx.Response.ContentType = "text/html";
+                FileStream fs = File.OpenRead(Program.HtmlPath + "/403forbidden.html");
+                fs.CopyTo(ctx.Response.OutputStream);
+                fs.Close();
+            }
+            ctx.Response.Close();
         }
         private void BannedIP(HttpListenerContext ctx)
         {
