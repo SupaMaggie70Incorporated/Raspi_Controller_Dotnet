@@ -361,3 +361,7 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/Raspi_Controller_Dotnet.dll
+/Raspi_Controller_Dotnet.exe
+/Raspi_Controller_Dotnet.runtimeconfig.json
+/users.json
